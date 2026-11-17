@@ -1,0 +1,9 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Só quem abre o app (login anônimo automático) lê e grava os dados da casa.
+    match /casas/{casaId}/{documento=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
