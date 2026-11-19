@@ -140,6 +140,17 @@
   <div id="modal" class="modal" hidden><div class="folha" id="folha" role="dialog" aria-modal="true"></div></div>
   <div id="toast" role="status"></div>
 
+  <script>
+    // Se algum arquivo JS tiver erro (ex.: config.js mal colado), mostra o erro na tela
+    window.addEventListener('error', e => {
+      const tela = document.getElementById('tela');
+      if (!tela || !/Carregando/.test(tela.textContent)) return;
+      const arq = (e.filename || '').split('/').pop() || 'desconhecido';
+      tela.innerHTML = '<div class="card"><b>Erro ao carregar o app</b>'
+        + '<div class="sub" style="margin-top:6px">Arquivo: <code>' + arq + '</code> (linha ' + (e.lineno || '?') + ')</div>'
+        + '<div class="sub" style="margin-top:6px">' + String(e.message).replace(/</g, '&lt;') + '</div></div>';
+    });
+  </script>
   <script type="module" src="app.js"></script>
   <script>
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {

@@ -1,6 +1,6 @@
 // Service worker: deixa o app abrir rápido e funcionar offline.
-// Ao publicar uma nova versão dos arquivos, aumente o número abaixo.
-const CACHE = 'casa-gastos-v1';
+// Busca sempre a versão mais nova na rede e usa o cache só quando está offline.
+const CACHE = 'casa-gastos-v2';
 const ARQUIVOS = [
   './', './index.html', './app.js', './calculo.js', './store.js', './config.js',
   './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'
@@ -26,13 +26,16 @@ self.addEventListener('fetch', e => {
   const cacheavel = url.origin === location.origin || url.hostname === 'www.gstatic.com';
   if (!cacheavel) return;
 
-  // Stale-while-revalidate: responde do cache e atualiza em segundo plano
+  // Rede primeiro (pega sempre a versão mais nova); sem internet, usa o cache
   e.respondWith(caches.open(CACHE).then(async cache => {
-    const emCache = await cache.match(req, { ignoreSearch: url.origin === location.origin });
-    const daRede = fetch(req).then(resp => {
+    try {
+      const resp = await fetch(req, { cache: 'no-cache' });
       if (resp.ok) cache.put(req, resp.clone());
       return resp;
-    }).catch(() => emCache);
-    return emCache || daRede;
+    } catch {
+      const emCache = await cache.match(req, { ignoreSearch: url.origin === location.origin });
+      if (emCache) return emCache;
+      throw new Error('offline e sem cache: ' + req.url);
+    }
   }));
 });

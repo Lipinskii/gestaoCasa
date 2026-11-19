@@ -1,4 +1,4 @@
-export const FIREBASE_CONFIG = const firebaseConfig = {
+export const FIREBASE_CONFIG = {
   apiKey: "AIzaSyDHCFqKzRTPmFmwsm6wIS2XC2RPT1ugKGM",
   authDomain: "gestao-de-gastos-lip.firebaseapp.com",
   projectId: "gestao-de-gastos-lip",
