@@ -174,7 +174,7 @@ function telaAjustes() {
       <input type="file" id="arquivo-json" accept="application/json,.json" hidden>
     </div>
 
-    <div class="rodape">Gastos da Casa · contato: <a href="https://github.com/Akasshw" target="_blank" rel="noopener">github.com/Akasshw</a></div>`;
+    <div class="rodape">Gastos da Casa · contato: <a href="https://github.com/lipinskii" target="_blank" rel="noopener">github.com/lipinskii</a></div>`;
 }
 
 // ---------------------------------------------------------------------------
