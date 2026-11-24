@@ -1,8 +1,8 @@
 // Service worker: deixa o app abrir rápido e funcionar offline.
 // Busca sempre a versão mais nova na rede e usa o cache só quando está offline.
-const CACHE = 'casa-gastos-v4';
+const CACHE = 'casa-gastos-v5';
 const ARQUIVOS = [
-  './', './index.html', './app.js', './calculo.js', './store.js', './mensal.js', './config.js',
+  './', './index.html', './app.js', './calculo.js', './store.js', './mensal.js', './nfce.js', './config.js',
   './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'
 ];
 
@@ -23,7 +23,7 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   // Arquivos do app e o SDK do Firebase (gstatic). O tráfego do banco não passa aqui.
-  const cacheavel = url.origin === location.origin || url.hostname === 'www.gstatic.com';
+  const cacheavel = url.origin === location.origin || url.hostname === 'www.gstatic.com' || url.hostname === 'cdn.jsdelivr.net';
   if (!cacheavel) return;
 
   // Rede primeiro (pega sempre a versão mais nova); sem internet, usa o cache

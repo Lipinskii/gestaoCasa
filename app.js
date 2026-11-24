@@ -1,5 +1,6 @@
 import { criarStore } from './store.js';
 import { calcular, dividir, ordenarParticipantes, ordemDivisao, partesDoItem, valorDoItem, formatarBRL as brl, parseValor } from './calculo.js';
+import { lerNota, nomeLoja, lerChave } from './nfce.js';
 import { mesAtual, somarMes, contasDoMes, contasAtrasadas, contarAlertas, nomeMes, mesCurto, vencimentoNoMes } from './mensal.js';
 
 const CATEGORIAS = ['Móveis', 'Eletrodomésticos', 'Cozinha', 'Limpeza', 'Decoração', 'Mercado', 'Contas', 'Outros'];
@@ -145,7 +146,7 @@ function telaItens() {
   html += `<div class="card">` + itens.map(i => `
     <div class="item-li" data-acao="editar-item" data-id="${i.id}">
       <div class="cresce">
-        <div class="tit">${esc(i.nome)}${i.categoria ? `<span class="tag">${esc(i.categoria)}</span>` : ''}${i.contaId ? `<span class="tag">Mensal</span>` : ''}${i.subitens?.length ? `<span class="tag">${i.subitens.length} ${i.subitens.length === 1 ? 'item' : 'itens'}</span>` : ''}</div>
+        <div class="tit">${esc(i.nome)}${i.categoria ? `<span class="tag">${esc(i.categoria)}</span>` : ''}${i.contaId ? `<span class="tag">Mensal</span>` : ''}${i.subitens?.length ? `<span class="tag">${i.subitens.length} ${i.subitens.length === 1 ? 'item' : 'itens'}</span>` : ''}${i.nfceChave ? `<span class="tag">NF</span>` : ''}</div>
         <div class="sub">${dataBR(i.data)} · pago por ${esc(nome(i.pagador))}</div>
         <div class="sub">${descricaoDivisao(i)}</div>
       </div>
@@ -437,19 +438,26 @@ function abrirItem(item, titulo, aviso = '') {
 }
 
 // Compra com vários itens internos, cada um com sua própria divisão
-function abrirCompra(item) {
+const INFO_NF = ['codigo', 'qtd', 'un', 'vUnit', 'desconto', 'valorBruto', 'conferir'];
+const fmtQtd = q => String(q).replace('.', ',');
+
+function abrirCompra(item, extras = {}) {
   const editando = !!item?.id;
   const todos = dados.pessoas.map(p => p.id);
   item = item || { nome: 'Mercado', data: hoje(), categoria: 'Mercado', pagador: eu || 'p1', participantes: todos, obs: '' };
   let padrao = item.subitens?.length ? todos : (item.participantes?.length ? [...item.participantes] : todos);
   const subs = (item.subitens?.length ? item.subitens : [])
-    .map(s => ({ nome: s.nome || '', valor: s.valor, txt: s.valor ? (s.valor / 100).toFixed(2).replace('.', ',') : '', participantes: [...(s.participantes?.length ? s.participantes : padrao)] }));
-  const nova = () => ({ nome: '', valor: NaN, txt: '', participantes: [...padrao] });
+    .map(s => ({ nome: s.nome || '', valor: s.valor, txt: s.valor ? (s.valor / 100).toFixed(2).replace('.', ',') : '',
+      participantes: [...(s.participantes?.length ? s.participantes : padrao)],
+      info: Object.fromEntries(INFO_NF.filter(k => s[k] != null && s[k] !== '' && s[k] !== false).map(k => [k, s[k]])) }));
+  const nova = () => ({ nome: '', valor: NaN, txt: '', participantes: [...padrao], info: {} });
   if (!subs.length) subs.push(nova());
   const primeiroNome = n => esc(String(n).split(' ')[0]);
 
   abrirModal(`
-    <h3>${editando ? 'Editar compra' : 'Compra com vários itens'}</h3>
+    <h3>${editando ? 'Editar compra' : extras.titulo || 'Compra com vários itens'}</h3>
+    ${extras.aviso ? `<div class="aviso-nf">${extras.aviso}</div>` : ''}
+    ${item.anexoId ? `<button type="button" class="btn sec peq" style="margin-bottom:12px" data-acao="ver-anexo" data-id="${esc(item.anexoId)}">Ver nota anexada</button>` : ''}
     <form id="form-compra" novalidate>
       <label class="campo">Descrição<input name="nome" required maxlength="60" placeholder="Ex.: Mercado" value="${esc(item.nome)}"></label>
       <div class="dupla">
@@ -462,6 +470,7 @@ function abrirCompra(item) {
       <fieldset><legend>Quem pagou a compra?</legend>${seg('pagador', item.pagador)}</fieldset>
       <fieldset><legend>Novos itens dividem com</legend>
         <div class="mini" id="padrao">${dados.pessoas.map(p => `<button type="button" class="mini-chip ${padrao.includes(p.id) ? 'on' : ''}" data-p="${p.id}">${primeiroNome(p.nome)}</button>`).join('')}</div>
+        <button type="button" class="link" style="margin-top:6px" id="aplicar-todos">Aplicar a todos os itens</button>
       </fieldset>
       <div class="legenda-subs"><span>Itens</span><span class="sub">toque nos nomes para marcar quem divide</span></div>
       <div id="subs"></div>
@@ -481,12 +490,13 @@ function abrirCompra(item) {
 
   const desenhar = () => {
     caixa.innerHTML = subs.map((s, i) => `
-      <div class="sub-li" data-i="${i}">
+      <div class="sub-li ${s.info?.conferir ? 'conferir' : ''}" data-i="${i}">
         <div class="sub-linha">
           <input class="sub-nome" data-campo="nome" maxlength="60" placeholder="Item ${i + 1}" value="${esc(s.nome)}" enterkeyhint="next">
           <input class="sub-valor" data-campo="valor" inputmode="decimal" placeholder="0,00" value="${esc(s.txt)}" enterkeyhint="next">
           <button type="button" class="x" data-sub="remover" aria-label="Remover item">×</button>
         </div>
+        ${detalheNF(s.info)}
         <div class="mini">${dados.pessoas.map(p => `<button type="button" class="mini-chip ${s.participantes.includes(p.id) ? 'on' : ''}" data-sub="pessoa" data-p="${p.id}">${primeiroNome(p.nome)}</button>`).join('')}</div>
       </div>`).join('');
     previa();
@@ -547,6 +557,12 @@ function abrirCompra(item) {
     b.classList.toggle('on', padrao.includes(p));
   });
   $('#add-sub').addEventListener('click', adicionar);
+  $('#aplicar-todos').addEventListener('click', () => {
+    if (!padrao.length) return toast('Marque pelo menos uma pessoa');
+    subs.forEach(s => { s.participantes = [...padrao]; });
+    desenhar();
+    toast('Divisão aplicada a todos os itens');
+  });
   form.addEventListener('change', previa);
 
   form.addEventListener('submit', e => {
@@ -563,9 +579,11 @@ function abrirCompra(item) {
       if (!s.participantes.length) return erro(`Marque quem divide ${rotulo}.`);
     }
     const subitens = preenchidos.map((s, k) => ({
+      ...s.info,
       nome: s.nome.trim() || `Item ${k + 1}`, valor: s.valor,
       participantes: ordenarParticipantes(dados.pessoas, s.participantes)
     }));
+    for (const x of subitens) if (x.conferir) delete x.conferir; // já revisado por quem salvou
     const salvar = {
       nome: fd.get('nome').trim(), data: fd.get('data') || hoje(), categoria: fd.get('categoria'),
       pagador: fd.get('pagador'), obs: fd.get('obs').trim(), subitens,
@@ -575,6 +593,12 @@ function abrirCompra(item) {
       atualizadoEm: new Date().toISOString()
     };
     if (item.id) salvar.id = item.id;
+    for (const k of ['anexoId', 'nfceChave', 'nfceLoja', 'nfceNumero']) if (item[k]) salvar[k] = item[k];
+    if (extras.anexo) {
+      salvar.anexoId = 'nf-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      store.salvarAnexo({ ...extras.anexo, id: salvar.anexoId, criadoEm: new Date().toISOString() })
+        .catch(e => { console.error(e); toast('A compra foi salva, mas o anexo não: ' + (e?.message || e)); });
+    }
     fecharModal();
     store.salvarItem(salvar).catch(falhou);
     toast(editando ? 'Compra atualizada' : 'Compra adicionada');
@@ -584,10 +608,165 @@ function abrirCompra(item) {
     if (!confirm(`Excluir a compra "${item.nome}" com ${subs.length} ${subs.length === 1 ? 'item' : 'itens'}?`)) return;
     fecharModal();
     store.excluirItem(item.id).catch(falhou);
+    if (item.anexoId) store.excluirAnexo(item.anexoId).catch(() => {});
     toast('Compra excluída');
   });
 
   desenhar();
+}
+
+function detalheNF(info = {}) {
+  if (info.qtd == null && !info.conferir) return '';
+  const partes = [];
+  if (info.qtd != null) partes.push(`${fmtQtd(info.qtd)} ${esc(info.un || '')}${info.vUnit ? ` × ${brl(info.vUnit)}` : ''}`);
+  if (info.desconto) partes.push(`desconto ${brl(info.desconto)}`);
+  if (info.conferir) partes.push('<b>confira o valor</b>');
+  return `<div class="detalhe-nf">${partes.join(' · ')}</div>`;
+}
+
+function abrirNovo() {
+  abrirModal(`
+    <h3>Adicionar</h3>
+    <div class="opcoes-novo">
+      <button class="opcao" data-acao="novo-item"><b>Item simples</b><span>Uma compra com um valor só (ex.: televisão)</span></button>
+      <button class="opcao" data-acao="nova-compra"><b>Compra com vários itens</b><span>Digite os itens e marque quem divide cada um</span></button>
+      <button class="opcao destaque-op" data-acao="ler-nota"><b>Ler nota fiscal</b><span>PDF da SEFAZ ou foto do cupom: os itens entram sozinhos</span></button>
+    </div>
+    <button class="btn sec" style="width:100%;margin-top:12px" data-acao="fechar">Cancelar</button>`);
+}
+
+function abrirLerNota() {
+  abrirModal(`
+    <h3>Ler nota fiscal</h3>
+    <div id="nf-escolha">
+      <label class="opcao destaque-op">
+        <b>PDF da SEFAZ (recomendado)</b>
+        <span>Leitura exata. Aponte a câmera para o QR code do cupom, abra a página da SEFAZ,
+          toque em <i>Imprimir</i> › <i>Salvar como PDF</i> e escolha o arquivo aqui.</span>
+        <input type="file" accept="application/pdf,.pdf" hidden data-nf>
+      </label>
+      <label class="opcao">
+        <b>Foto do cupom</b>
+        <span>Tire a foto com o cupom esticado e bem iluminado. A leitura pode ter erros nos nomes: confira antes de salvar.</span>
+        <input type="file" accept="image/*" capture="environment" hidden data-nf>
+      </label>
+      <label class="opcao">
+        <b>Escolher foto da galeria</b>
+        <span>Uma foto do cupom já tirada.</span>
+        <input type="file" accept="image/*" hidden data-nf>
+      </label>
+    </div>
+    <div id="nf-progresso" hidden>
+      <div id="nf-msg" class="sub">Lendo…</div>
+      <div class="barra"><div id="nf-barra" style="width:5%"></div></div>
+    </div>
+    <div class="erro" id="erro" style="margin-top:10px"></div>
+    <button class="btn sec" style="width:100%;margin-top:8px" data-acao="fechar">Cancelar</button>`);
+
+  $('#folha').querySelectorAll('input[data-nf]').forEach(inp => inp.addEventListener('change', async () => {
+    const arquivo = inp.files[0];
+    if (!arquivo) return;
+    $('#nf-escolha').hidden = true;
+    $('#nf-progresso').hidden = false;
+    $('#erro').textContent = '';
+    const progresso = (msg, frac) => {
+      if (!$('#nf-msg')) return;
+      $('#nf-msg').textContent = msg;
+      $('#nf-barra').style.width = Math.round(Math.max(0.05, frac) * 100) + '%';
+    };
+    try {
+      const nota = await lerNota(arquivo, progresso);
+      progresso('Preparando o anexo…', 1);
+      const anexo = await prepararAnexo(arquivo).catch(() => null);
+      if (!$('#nf-progresso')) return; // modal fechado no meio da leitura
+      revisarNota(nota, anexo);
+    } catch (e) {
+      console.error(e);
+      if (!$('#nf-escolha')) return;
+      $('#nf-escolha').hidden = false;
+      $('#nf-progresso').hidden = true;
+      $('#erro').textContent = e?.message || String(e);
+      inp.value = '';
+    }
+  }));
+}
+
+const LIMITE_ANEXO = 900000; // caracteres (o Firestore aceita até ~1 MB por documento)
+function lerComoDataURL(arquivo) {
+  return new Promise((ok, erro) => {
+    const fr = new FileReader();
+    fr.onload = () => ok(fr.result);
+    fr.onerror = () => erro(fr.error);
+    fr.readAsDataURL(arquivo);
+  });
+}
+async function prepararAnexo(arquivo) {
+  const ehPDF = arquivo.type === 'application/pdf' || /\.pdf$/i.test(arquivo.name);
+  if (ehPDF) {
+    const dados = await lerComoDataURL(arquivo);
+    return dados.length <= LIMITE_ANEXO ? { tipo: 'pdf', nome: arquivo.name, dados } : null;
+  }
+  const { fotoParaAnexo } = await import('./nfce.js');
+  for (const [larg, q] of [[1100, 0.6], [900, 0.5], [700, 0.45]]) {
+    const dados = await fotoParaAnexo(arquivo, larg, q);
+    if (dados.length <= LIMITE_ANEXO) return { tipo: 'imagem', nome: arquivo.name, dados };
+  }
+  return null;
+}
+
+function revisarNota(nota, anexo) {
+  const todos = dados.pessoas.map(p => p.id);
+  const ch = lerChave(nota.chave);
+  if (nota.chave) {
+    const repetida = dados.itens.find(i => i.nfceChave === nota.chave);
+    if (repetida && !confirm(`Esta nota já foi lançada em ${dataBR(repetida.data)} como "${repetida.nome}". Lançar de novo mesmo assim?`)) {
+      fecharModal();
+      return;
+    }
+  }
+  const loja = nomeLoja(nota.loja);
+  const data = nota.data || hoje();
+  const soma = nota.itens.reduce((t, i) => t + i.valor, 0);
+  const avisos = [];
+  avisos.push(nota.origem === 'pdf'
+    ? `Lido do PDF da SEFAZ: <b>${nota.itens.length} ${nota.itens.length === 1 ? 'item' : 'itens'}</b>${nota.numero ? ` · NFC-e ${esc(nota.numero)}` : ''}.`
+    : `Lido da foto: <b>${nota.itens.length} ${nota.itens.length === 1 ? 'item' : 'itens'}</b>. Confira nomes e valores antes de salvar.`);
+  if (nota.desconto) avisos.push(`Desconto de ${brl(nota.desconto)} distribuído proporcionalmente entre os itens.`);
+  if (nota.valorPago != null) {
+    const dif = nota.valorPago - soma;
+    avisos.push(Math.abs(dif) <= 1
+      ? `<span class="pos">✓ A soma (${brl(soma)}) confere com o valor pago na nota.</span>`
+      : `<span class="neg">A soma dos itens (${brl(soma)}) não confere com o valor pago na nota (${brl(nota.valorPago)}): diferença de ${brl(Math.abs(dif))}. Corrija os valores marcados.</span>`);
+  }
+  if (!anexo) avisos.push('O arquivo é grande demais para ser guardado como anexo; só os itens serão salvos.');
+  const item = {
+    nome: `${loja} ${dataBR(data).slice(0, 5)}`, data, categoria: 'Mercado', pagador: eu || 'p1',
+    participantes: todos, obs: '',
+    nfceChave: nota.chave || '', nfceLoja: nota.loja || '', nfceNumero: nota.numero || ch?.numero || '',
+    subitens: nota.itens.map(i => ({ ...i, participantes: todos }))
+  };
+  abrirCompra(item, { titulo: 'Revisar nota fiscal', aviso: avisos.map(t => `<div>${t}</div>`).join(''), anexo });
+}
+
+async function verAnexo(id) {
+  toast('Abrindo o anexo…');
+  try {
+    const a = await store.lerAnexo(id);
+    if (!a) return toast('Anexo não encontrado');
+    const blob = await (await fetch(a.dados)).blob();
+    const url = URL.createObjectURL(blob);
+    const w = window.open(url, '_blank');
+    if (!w) {
+      if (a.tipo === 'imagem') {
+        abrirModal(`<h3>Nota anexada</h3><img src="${a.dados}" alt="Foto da nota" style="width:100%;border-radius:10px">
+          <button class="btn sec" style="width:100%;margin-top:12px" data-acao="fechar">Fechar</button>`);
+      } else {
+        const link = Object.assign(document.createElement('a'), { href: url, download: a.nome || 'nota.pdf' });
+        document.body.appendChild(link); link.click(); link.remove();
+      }
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e) { falhou(e); }
 }
 
 function abrirPagarConta(conta, mes) {
@@ -772,7 +951,7 @@ $('#abas').addEventListener('click', e => {
 });
 
 $('#fab').addEventListener('click', () =>
-  aba === 'pagamentos' ? abrirPagamento() : aba === 'mensal' ? abrirConta() : abrirItem());
+  aba === 'pagamentos' ? abrirPagamento() : aba === 'mensal' ? abrirConta() : abrirNovo());
 
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-acao]');
@@ -780,6 +959,10 @@ document.addEventListener('click', e => {
   const { acao, id } = el.dataset;
   switch (acao) {
     case 'fechar': fecharModal(); break;
+    case 'novo-item': abrirItem(); break;
+    case 'nova-compra': abrirCompra(); break;
+    case 'ler-nota': abrirLerNota(); break;
+    case 'ver-anexo': verAnexo(id); break;
     case 'filtro': filtro = id; render(); break;
     case 'mes': {
       const d = Number(el.dataset.delta);

@@ -38,6 +38,7 @@ async function criarFirebaseStore() {
   const itensCol = fs.collection(casaRef, 'itens');
   const pagCol = fs.collection(casaRef, 'pagamentos');
   const contasCol = fs.collection(casaRef, 'contas');
+  const anexosCol = fs.collection(casaRef, 'anexos'); // lidos só sob demanda
 
   const limpar = obj => {
     const { id, ...resto } = obj;
@@ -88,6 +89,12 @@ async function criarFirebaseStore() {
     excluirPagamento: id => fs.deleteDoc(fs.doc(pagCol, id)),
     salvarConta: c => fs.setDoc(fs.doc(contasCol, c.id || novoId()), limpar(c)),
     excluirConta: id => fs.deleteDoc(fs.doc(contasCol, id)),
+    salvarAnexo: a => fs.setDoc(fs.doc(anexosCol, a.id), limpar(a)),
+    async lerAnexo(id) {
+      const snap = await fs.getDoc(fs.doc(anexosCol, id));
+      return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+    },
+    excluirAnexo: id => fs.deleteDoc(fs.doc(anexosCol, id)),
     async importar(dados) {
       const lote = fs.writeBatch(db);
       if (dados.pessoas) lote.set(casaRef, { pessoas: dados.pessoas }, { merge: true });
@@ -134,6 +141,16 @@ function criarLocalStore() {
     excluirPagamento(id) { estado.pagamentos = estado.pagamentos.filter(x => x.id !== id); return persistir(); },
     salvarConta(c) { upsert('contas', c); return persistir(); },
     excluirConta(id) { estado.contas = estado.contas.filter(x => x.id !== id); return persistir(); },
+    // Anexos ficam numa chave separada (podem ser grandes)
+    salvarAnexo(a) {
+      try { localStorage.setItem('casa-gastos-anexo-' + a.id, JSON.stringify(a)); return Promise.resolve(); }
+      catch (e) { return Promise.reject(new Error('sem espaço no aparelho para o anexo')); }
+    },
+    lerAnexo(id) {
+      try { return Promise.resolve(JSON.parse(localStorage.getItem('casa-gastos-anexo-' + id))); }
+      catch { return Promise.resolve(null); }
+    },
+    excluirAnexo(id) { try { localStorage.removeItem('casa-gastos-anexo-' + id); } catch { /* ignora */ } return Promise.resolve(); },
     importar(dados) {
       if (dados.pessoas) estado.pessoas = dados.pessoas;
       for (const it of dados.itens || []) upsert('itens', it);

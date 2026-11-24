@@ -115,6 +115,19 @@
   .mini-chip { border: 1px solid var(--borda); background: var(--card); color: var(--sub); border-radius: 999px; padding: 5px 4px;
     font-size: .82rem; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mini-chip.on { background: var(--pri-claro); border-color: var(--pri); color: var(--pri); font-weight: 600; }
+  .aviso-nf { background: var(--pri-claro); border-radius: 10px; padding: 10px 12px; font-size: .88rem; margin: -4px 0 12px; }
+  .aviso-nf div + div { margin-top: 4px; }
+  .detalhe-nf { font-size: .78rem; color: var(--sub); margin: -2px 2px 6px; }
+  .sub-li.conferir { border-color: var(--neg); }
+  .sub-li.conferir .detalhe-nf b { color: var(--neg); }
+  .opcoes-novo, #nf-escolha { display: grid; gap: 10px; }
+  .opcao { display: block; text-align: left; border: 1px solid var(--borda); background: var(--card); border-radius: 14px;
+    padding: 14px 16px; cursor: pointer; font: inherit; color: inherit; width: 100%; }
+  .opcao b { display: block; font-size: 1rem; margin-bottom: 2px; }
+  .opcao span { display: block; font-size: .85rem; color: var(--sub); }
+  .opcao.destaque-op { border-color: var(--pri); }
+  .opcao.destaque-op b { color: var(--pri); }
+  #nf-progresso { padding: 10px 2px; }
   .lapis { border: 0; background: none; color: var(--sub); padding: 6px; cursor: pointer; flex: none; }
   .lapis svg { width: 18px; height: 18px; display: block; }
   .fab { position: fixed; right: 18px; bottom: calc(76px + env(safe-area-inset-bottom)); z-index: 11;
@@ -195,7 +208,7 @@
   <script type="module">
     // Carrega o app; se falhar (arquivo faltando, nome errado…), diz qual arquivo é o problema
     import('./app.js').catch(async err => {
-      const arquivos = ['app.js', 'store.js', 'calculo.js', 'mensal.js', 'config.js'];
+      const arquivos = ['app.js', 'store.js', 'calculo.js', 'mensal.js', 'nfce.js', 'config.js'];
       const faltando = [];
       for (const f of arquivos) {
         try { const r = await fetch(f + '?v=' + Date.now(), { cache: 'no-store' }); if (!r.ok) faltando.push(f + ' (' + r.status + ')'); }

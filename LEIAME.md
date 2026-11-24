@@ -8,6 +8,11 @@ App para celular que controla as compras da casa e calcula quanto cada morador d
 - Na aba **Acertos** vocês registram os Pix entre moradores, e esses valores são descontados do que ainda está em aberto. O botão **Quitar** no Resumo já preenche o valor.
 - Os dados ficam sincronizados entre os três celulares pelo Firebase. O app também funciona sem internet e envia as alterações quando a conexão volta.
 - **Compras com vários itens** (ex.: mercado): no formulário de item, toque em *Separar em vários itens*. Cada item interno tem valor próprio e vocês marcam quem divide cada um (ex.: shampoo só do Maurício). A compra aparece como um único lançamento na lista.
+- **Leitura de nota fiscal (NFC-e)**: no botão **+**, escolha *Ler nota fiscal*.
+  - **PDF da SEFAZ (recomendado, leitura exata)**: aponte a câmera do celular para o QR code do cupom, abra a página da SEFAZ, toque em *Imprimir* › *Salvar como PDF* e escolha o arquivo no app.
+  - **Foto do cupom**: o app lê o texto da foto no próprio celular (OCR). Os valores são conferidos com o total da nota; os nomes podem vir com erros, então revise antes de salvar.
+  - O app monta uma compra com todos os itens; quem inseriu só marca quem divide cada um. O PDF/foto fica anexado à compra e o app avisa se a mesma nota for lançada duas vezes.
+  - Na primeira leitura o celular baixa as bibliotecas de leitura (PDF ~1 MB; foto ~5 MB). Depois ficam guardadas.
 - Na aba **Mensal** ficam as contas que se repetem todo mês (aluguel, luz, internet…), com dia de vencimento. Cada mês mostra o que está pago, o que vence em breve e o que está atrasado, inclusive de meses anteriores. Ao marcar uma conta como paga, o valor entra na divisão como um item comum.
 - Em Ajustes dá para exportar uma planilha (CSV) e fazer backup ou restauração (JSON).
 
@@ -84,6 +89,7 @@ O `firebaseConfig` não é uma senha. É normal ele ficar no código de apps web
 |---|---|
 | `index.html` | Telas e estilo |
 | `app.js` | Lógica da interface |
+| `nfce.js` | Leitura da nota fiscal (PDF da SEFAZ e foto do cupom) |
 | `mensal.js` | Vencimentos e situação das contas mensais |
 | `calculo.js` | Divisão, compensação entre pares e simplificação (valores em centavos) |
 | `store.js` | Firebase Firestore ou armazenamento local |
