@@ -1,23 +1,43 @@
 import { criarStore } from './store.js';
 import { calcular, dividir, ordenarParticipantes, ordemDivisao, formatarBRL as brl, parseValor } from './calculo.js';
+import { mesAtual, somarMes, contasDoMes, contasAtrasadas, contarAlertas, nomeMes, mesCurto, vencimentoNoMes } from './mensal.js';
 
 const CATEGORIAS = ['Móveis', 'Eletrodomésticos', 'Cozinha', 'Limpeza', 'Decoração', 'Mercado', 'Contas', 'Outros'];
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const ls = {
-  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
-  set(k, v) { try { localStorage.setItem(k, v); } catch { /* ignora */ } }
+// Preferências do aparelho: grava no localStorage e também num cookie,
+// para não se perder se um dos dois for limpo ou bloqueado pelo navegador.
+const lerCookie = k => {
+  const m = document.cookie.match(new RegExp('(?:^|; )' + k + '=([^;]*)'));
+  return m ? decodeURIComponent(m[1]) : null;
 };
+const ls = {
+  get(k) {
+    let v = null;
+    try { v = localStorage.getItem(k); } catch { /* bloqueado */ }
+    if (v == null) v = lerCookie(k);
+    return v;
+  },
+  set(k, v) {
+    try { localStorage.setItem(k, v); } catch { /* bloqueado */ }
+    document.cookie = `${k}=${encodeURIComponent(v)}; max-age=315360000; path=/; SameSite=Lax`;
+  }
+};
+// Pede ao navegador para não apagar os dados do app automaticamente
+navigator.storage?.persist?.().catch(() => {});
 
 let store;
-let dados = { pessoas: null, itens: [], pagamentos: [] };
+let dados = { pessoas: null, itens: [], pagamentos: [], contas: [] };
 let carregado = false;
 let aba = 'resumo';
 let filtro = 'todos';
+let mesMensal = mesAtual();
 let simplificar = ls.get('casa-gastos-simplificar') === '1';
 let eu = ls.get('casa-gastos-eu');
+if (eu) ls.set('casa-gastos-eu', eu); // regrava nos dois lugares
+let jaPerguntouEu = false;
 
 const nome = id => dados.pessoas?.find(p => p.id === id)?.nome ?? '?';
 const nomeEu = id => id === eu ? `${nome(id)} (você)` : nome(id);
@@ -43,12 +63,16 @@ const falhou = e => { console.error(e); toast('Erro ao salvar: ' + (e?.message |
 function render() {
   if (!carregado) return;
   if (!dados.pessoas) { abrirSetup(); return; }
-  if (!eu || !dados.pessoas.some(p => p.id === eu)) { abrirQuemSouEu(); }
+  if ((!eu || !dados.pessoas.some(p => p.id === eu)) && !jaPerguntouEu) { abrirQuemSouEu(); }
 
   document.querySelectorAll('#abas button').forEach(b => b.classList.toggle('ativa', b.dataset.aba === aba));
   $('#fab').hidden = aba === 'ajustes';
+  const alertas = contarAlertas(dados.contas, dados.itens);
+  const selo = $('#selo-mensal');
+  selo.textContent = alertas > 9 ? '9+' : alertas;
+  selo.hidden = alertas === 0;
   const r = calcular(dados.pessoas, dados.itens, dados.pagamentos);
-  const telas = { resumo: telaResumo, itens: telaItens, pagamentos: telaPagamentos, ajustes: telaAjustes };
+  const telas = { resumo: telaResumo, itens: telaItens, mensal: telaMensal, pagamentos: telaPagamentos, ajustes: telaAjustes };
   $('#tela').innerHTML = telas[aba](r);
 }
 
@@ -117,7 +141,7 @@ function telaItens() {
   html += `<div class="card">` + itens.map(i => `
     <div class="item-li" data-acao="editar-item" data-id="${i.id}">
       <div class="cresce">
-        <div class="tit">${esc(i.nome)}${i.categoria ? `<span class="tag">${esc(i.categoria)}</span>` : ''}</div>
+        <div class="tit">${esc(i.nome)}${i.categoria ? `<span class="tag">${esc(i.categoria)}</span>` : ''}${i.contaId ? `<span class="tag">Mensal</span>` : ''}</div>
         <div class="sub">${dataBR(i.data)} · pago por ${esc(nome(i.pagador))}</div>
         <div class="sub">${descricaoDivisao(i)}</div>
       </div>
@@ -125,6 +149,78 @@ function telaItens() {
     </div>`).join('') + `</div>`;
   const soma = itens.reduce((s, i) => s + i.valor, 0);
   html += `<div class="sub" style="text-align:right;margin-right:4px">Soma da lista: <b>${brl(soma)}</b></div>`;
+  return html;
+}
+
+const ROTULO_ESTADO = {
+  paga: s => `Paga em ${dataBR(s.pagamento.data).slice(0, 5)} por ${esc(nome(s.pagamento.pagador))}`,
+  atrasada: s => `Atrasada há ${-s.dias} ${s.dias === -1 ? 'dia' : 'dias'}`,
+  hoje: () => 'Vence hoje',
+  breve: s => `Vence em ${s.dias} ${s.dias === 1 ? 'dia' : 'dias'}`,
+  pendente: s => `Vence em ${dataBR(s.vencimento).slice(0, 5)}`
+};
+
+function cartaoConta(s, mostrarMes = false) {
+  const valor = s.pagamento ? s.pagamento.valor : (s.conta.valorPrevisto || 0);
+  return `
+    <div class="conta ${s.estado}">
+      <div class="dia"><b>${s.vencimento.slice(8)}</b><span>${s.vencimento.slice(5, 7)}</span></div>
+      <div class="cresce" data-acao="${s.pagamento ? 'editar-item' : 'pagar-conta'}" data-id="${s.pagamento ? s.pagamento.id : s.conta.id}" data-mes="${s.mes}">
+        <div class="tit">${esc(s.conta.nome)}${mostrarMes ? ` <span class="sub">· ${mesCurto(s.mes)}</span>` : ''}</div>
+        <div class="estado">${ROTULO_ESTADO[s.estado](s)}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="valor ${s.pagamento ? '' : 'sub'}">${valor ? brl(valor) : '—'}</div>
+        ${s.pagamento
+          ? `<span class="ok">✓</span>`
+          : `<button class="btn peq" data-acao="pagar-conta" data-id="${s.conta.id}" data-mes="${s.mes}">Pagar</button>`}
+      </div>
+      <button class="lapis" aria-label="Editar conta" data-acao="editar-conta" data-id="${s.conta.id}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+      </button>
+    </div>`;
+}
+
+function telaMensal() {
+  const lista = contasDoMes(dados.contas, mesMensal, dados.itens);
+  const atrasadasOutros = contasAtrasadas(dados.contas, dados.itens).filter(s => s.mes !== mesMensal);
+  let html = `
+    <div class="mes-nav">
+      <button class="btn sec peq" data-acao="mes" data-delta="-1" aria-label="Mês anterior">‹</button>
+      <div class="cresce" style="text-align:center"><b>${nomeMes(mesMensal)}</b>
+        ${mesMensal !== mesAtual() ? `<div><button class="link" data-acao="mes" data-delta="0">voltar para o mês atual</button></div>` : ''}</div>
+      <button class="btn sec peq" data-acao="mes" data-delta="1" aria-label="Próximo mês">›</button>
+    </div>`;
+
+  if (atrasadasOutros.length) {
+    html += `<div class="card alerta"><b>Contas atrasadas de outros meses</b>` +
+      atrasadasOutros.map(s => cartaoConta(s, true)).join('') + `</div>`;
+  }
+
+  if (dados.contas.length === 0) {
+    return html + `<div class="card vazio">Nenhuma conta mensal cadastrada.<br>
+      Toque em <b>+</b> para cadastrar aluguel, luz, água, internet…<br>
+      <span class="sub">Ela vai aparecer todo mês para vocês marcarem como paga.</span></div>`;
+  }
+  if (lista.length === 0) return html + `<div class="card vazio">Nenhuma conta ativa neste mês.</div>`;
+
+  const pagas = lista.filter(s => s.pagamento);
+  const totalPago = pagas.reduce((t, s) => t + s.pagamento.valor, 0);
+  const aPagar = lista.filter(s => !s.pagamento).reduce((t, s) => t + (s.conta.valorPrevisto || 0), 0);
+  const semValor = lista.filter(s => !s.pagamento && !s.conta.valorPrevisto).length;
+  const pct = Math.round(pagas.length / lista.length * 100);
+  html += `
+    <div class="card">
+      <div class="linha-flex"><div class="cresce"><b>${pagas.length} de ${lista.length}</b> ${lista.length === 1 ? 'conta paga' : 'contas pagas'}</div>
+        <div class="sub">${pct}%</div></div>
+      <div class="barra"><div style="width:${pct}%"></div></div>
+      <div class="linha-flex sub" style="margin-top:8px">
+        <div class="cresce">Pago: <b>${brl(totalPago)}</b></div>
+        <div>Falta (previsto): <b>${brl(aPagar)}</b>${semValor ? ` + ${semValor} sem valor` : ''}</div>
+      </div>
+    </div>
+    <div class="card">${lista.map(s => cartaoConta(s)).join('')}</div>
+    <div class="sub" style="margin:0 4px">Ao marcar como paga, o valor entra na divisão entre os moradores, como um item comum.</div>`;
   return html;
 }
 
@@ -227,21 +323,28 @@ function abrirSetup() {
 
 function abrirQuemSouEu() {
   if (!$('#modal').hidden) return;
+  jaPerguntouEu = true; // pergunta no máximo uma vez por abertura do app
   abrirModal(`
     <h3>Quem é você?</h3>
     <div class="sub" style="margin-bottom:12px">Escolha seu nome neste aparelho (dá para trocar depois em Ajustes).</div>
-    <div class="grade3">${dados.pessoas.map(p => `<button class="btn sec" data-acao="sou" data-id="${p.id}">${esc(p.nome)}</button>`).join('')}</div>`,
-    f => { f.dataset.travado = '1'; });
+    <div class="grade3">${dados.pessoas.map(p => `<button class="btn sec" data-acao="sou" data-id="${p.id}">${esc(p.nome)}</button>`).join('')}</div>
+    <button class="btn sec" style="width:100%;margin-top:10px" data-acao="fechar">Agora não</button>`);
 }
 
-function abrirItem(item) {
-  const editando = !!item;
+function abrirItem(item, titulo, aviso = '') {
+  const editando = !!item?.id;
   item = item || { nome: '', valor: null, data: hoje(), categoria: '', pagador: eu || 'p1',
     participantes: dados.pessoas.map(p => p.id), obs: '' };
+  const daConta = !!item.contaId;
+  if (daConta && !aviso) {
+    const conta = dados.contas.find(c => c.id === item.contaId);
+    aviso = `Conta mensal · competência ${mesCurto(item.competencia)}${conta ? ` · vencimento ${dataBR(vencimentoNoMes(conta, item.competencia))}` : ''}`;
+  }
   abrirModal(`
-    <h3>${editando ? 'Editar item' : 'Novo item'}</h3>
+    <h3>${titulo || (editando ? (daConta ? 'Pagamento da conta' : 'Editar item') : 'Novo item')}</h3>
+    ${aviso ? `<div class="sub" style="margin:-8px 0 12px">${aviso}</div>` : ''}
     <form id="form-item" novalidate>
-      <label class="campo">O que foi comprado?<input name="nome" required maxlength="60" placeholder="Ex.: Televisão" value="${esc(item.nome)}"></label>
+      <label class="campo">${daConta ? 'Descrição' : 'O que foi comprado?'}<input name="nome" required maxlength="60" placeholder="Ex.: Televisão" value="${esc(item.nome)}"></label>
       <div class="dupla">
         <label class="campo">Valor (R$)<input name="valor" inputmode="decimal" placeholder="0,00" value="${item.valor != null ? (item.valor / 100).toFixed(2).replace('.', ',') : ''}"></label>
         <label class="campo">Data<input type="date" name="data" value="${esc(item.data || hoje())}"></label>
@@ -256,9 +359,9 @@ function abrirItem(item) {
       <label class="campo">Observação (opcional)<input name="obs" maxlength="120" value="${esc(item.obs || '')}"></label>
       <div class="erro" id="erro"></div>
       <div class="acoes">
-        ${editando ? `<button type="button" class="btn perigo" data-acao="excluir-item">Excluir</button>` : ''}
+        ${editando ? `<button type="button" class="btn perigo" data-acao="excluir-item">${daConta ? 'Desfazer pagamento' : 'Excluir'}</button>` : ''}
         <button type="button" class="btn sec" data-acao="fechar">Cancelar</button>
-        <button type="submit" class="btn cresce">Salvar</button>
+        <button type="submit" class="btn cresce">${daConta && !editando ? 'Marcar como paga' : 'Salvar'}</button>
       </div>
     </form>`);
 
@@ -304,17 +407,121 @@ function abrirItem(item) {
     const salvar = { ...v, participantes: ordenarParticipantes(dados.pessoas, v.participantes) };
     if (editando) { salvar.id = item.id; salvar.criadoEm = item.criadoEm; }
     else salvar.criadoEm = new Date().toISOString();
+    if (daConta) { salvar.contaId = item.contaId; salvar.competencia = item.competencia; }
     salvar.atualizadoEm = new Date().toISOString();
     fecharModal();
     store.salvarItem(salvar).catch(falhou);
-    toast(editando ? 'Item atualizado' : 'Item adicionado');
+    toast(daConta && !editando ? 'Conta marcada como paga' : editando ? 'Item atualizado' : 'Item adicionado');
   });
 
   $('#folha').querySelector('[data-acao="excluir-item"]')?.addEventListener('click', () => {
-    if (!confirm(`Excluir "${item.nome}"?`)) return;
+    if (!confirm(daConta ? `Desfazer o pagamento de "${item.nome}"? A conta volta a ficar em aberto.` : `Excluir "${item.nome}"?`)) return;
     fecharModal();
     store.excluirItem(item.id).catch(falhou);
-    toast('Item excluído');
+    toast(daConta ? 'Pagamento desfeito' : 'Item excluído');
+  });
+}
+
+function abrirPagarConta(conta, mes) {
+  const valor = conta.valorPrevisto || null;
+  abrirItem({
+    nome: `${conta.nome} (${mesCurto(mes)})`, valor, data: hoje(), categoria: conta.categoria || 'Contas',
+    pagador: conta.pagadorPadrao || eu || 'p1', participantes: conta.participantes?.length ? conta.participantes : dados.pessoas.map(p => p.id),
+    obs: '', contaId: conta.id, competencia: mes
+  }, `Pagar ${esc(conta.nome)}`,
+  `Competência ${mesCurto(mes)} · vencimento ${dataBR(vencimentoNoMes(conta, mes))}${valor ? '' : ' · confira o valor da fatura'}`);
+}
+
+function abrirConta(conta) {
+  const editando = !!conta;
+  conta = conta || { nome: '', valorPrevisto: null, diaVencimento: 10, categoria: 'Contas', pagadorPadrao: '',
+    participantes: dados.pessoas.map(p => p.id), inicio: mesMensal, fim: null, obs: '' };
+  const v = conta.valorPrevisto ? (conta.valorPrevisto / 100).toFixed(2).replace('.', ',') : '';
+  abrirModal(`
+    <h3>${editando ? 'Editar conta mensal' : 'Nova conta mensal'}</h3>
+    <form id="form-conta" novalidate>
+      <label class="campo">Conta<input name="nome" required maxlength="40" placeholder="Ex.: Luz, Internet, Aluguel" value="${esc(conta.nome)}"></label>
+      <div class="dupla">
+        <label class="campo">Valor previsto (R$)<input name="valor" inputmode="decimal" placeholder="varia" value="${v}"></label>
+        <label class="campo">Dia do vencimento<input name="dia" type="number" inputmode="numeric" min="1" max="31" value="${esc(conta.diaVencimento)}"></label>
+      </div>
+      <div class="sub" style="margin:-6px 0 12px">Se o valor muda todo mês (luz, água), deixe em branco: você digita o valor real ao pagar.</div>
+      <div class="dupla">
+        <label class="campo">Categoria<select name="categoria">
+          ${CATEGORIAS.map(c => `<option ${c === conta.categoria ? 'selected' : ''}>${c}</option>`).join('')}
+        </select></label>
+        <label class="campo">Começa em<input name="inicio" type="month" value="${esc(conta.inicio || mesMensal)}"></label>
+      </div>
+      <fieldset><legend>Quem costuma pagar? <span class="sub">(opcional)</span></legend>
+        <div class="seg">${dados.pessoas.map(p => {
+          const id = `pp-${p.id}`;
+          return `<input type="radio" name="pagadorPadrao" id="${id}" value="${p.id}" ${p.id === conta.pagadorPadrao ? 'checked' : ''}><label for="${id}">${esc(p.nome)}</label>`;
+        }).join('')}</div></fieldset>
+      <fieldset><legend>Dividir com</legend>${seg('part', null, 'checkbox', conta.participantes || [])}</fieldset>
+      <label class="campo">Observação (opcional)<input name="obs" maxlength="120" placeholder="Ex.: débito automático, código do cliente" value="${esc(conta.obs || '')}"></label>
+      ${editando ? `<div class="sub" style="margin-bottom:10px">${conta.fim
+        ? `Encerrada: aparece até <b>${mesCurto(conta.fim)}</b>. <button type="button" class="link" data-acao="reativar-conta">Reativar</button>`
+        : `Repete todo mês desde ${mesCurto(conta.inicio)}. <button type="button" class="link" data-acao="encerrar-conta">Encerrar após ${mesCurto(mesMensal)}</button>`}</div>` : ''}
+      <div class="erro" id="erro"></div>
+      <div class="acoes">
+        ${editando ? `<button type="button" class="btn perigo" data-acao="excluir-conta">Excluir</button>` : ''}
+        <button type="button" class="btn sec" data-acao="fechar">Cancelar</button>
+        <button type="submit" class="btn cresce">Salvar</button>
+      </div>
+    </form>`);
+
+  const form = $('#form-conta');
+  const ler = () => {
+    const fd = new FormData(form);
+    const txtValor = fd.get('valor').trim();
+    return {
+      nome: fd.get('nome').trim(),
+      valorPrevisto: txtValor ? parseValor(txtValor) : 0,
+      diaVencimento: parseInt(fd.get('dia'), 10),
+      categoria: fd.get('categoria'),
+      inicio: fd.get('inicio') || mesMensal,
+      pagadorPadrao: fd.get('pagadorPadrao') || '',
+      participantes: ordenarParticipantes(dados.pessoas, fd.getAll('part')),
+      obs: fd.get('obs').trim()
+    };
+  };
+  const gravar = (extra = {}) => {
+    const v = { ...ler(), ...extra };
+    const erro = msg => { $('#erro').textContent = msg; return false; };
+    if (!v.nome) return erro('Informe o nome da conta.');
+    if (Number.isNaN(v.valorPrevisto) || v.valorPrevisto < 0) return erro('Valor previsto inválido.');
+    if (!(v.diaVencimento >= 1 && v.diaVencimento <= 31)) return erro('O dia do vencimento deve ser de 1 a 31.');
+    if (!v.participantes.length) return erro('Escolha com quem dividir.');
+    if (!/^\d{4}-\d{2}$/.test(v.inicio)) return erro('Mês de início inválido.');
+    const salvar = { ...v, fim: 'fim' in extra ? extra.fim : (conta.fim || null) };
+    if (salvar.fim && salvar.fim < salvar.inicio) return erro('A conta não pode terminar antes de começar.');
+    if (editando) { salvar.id = conta.id; salvar.criadoEm = conta.criadoEm; }
+    else salvar.criadoEm = new Date().toISOString();
+    fecharModal();
+    store.salvarConta(salvar).catch(falhou);
+    return true;
+  };
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    if (gravar()) toast(editando ? 'Conta atualizada' : 'Conta cadastrada');
+  });
+  const f = $('#folha');
+  f.querySelector('[data-acao="encerrar-conta"]')?.addEventListener('click', () => {
+    if (confirm(`Encerrar "${conta.nome}"? Ela deixa de aparecer a partir de ${mesCurto(somarMes(mesMensal, 1))}. O histórico de pagamentos é mantido.`)
+      && gravar({ fim: mesMensal })) toast('Conta encerrada');
+  });
+  f.querySelector('[data-acao="reativar-conta"]')?.addEventListener('click', () => {
+    if (gravar({ fim: null })) toast('Conta reativada');
+  });
+  f.querySelector('[data-acao="excluir-conta"]')?.addEventListener('click', () => {
+    const pagos = dados.itens.filter(i => i.contaId === conta.id).length;
+    const msg = pagos
+      ? `Excluir "${conta.nome}"? Os ${pagos} pagamento(s) já registrados continuam na lista de itens. Se só não quer mais que ela repita, use "Encerrar".`
+      : `Excluir "${conta.nome}"?`;
+    if (!confirm(msg)) return;
+    fecharModal();
+    store.excluirConta(conta.id).catch(falhou);
+    toast('Conta excluída');
   });
 }
 
@@ -391,7 +598,8 @@ $('#abas').addEventListener('click', e => {
   window.scrollTo(0, 0);
 });
 
-$('#fab').addEventListener('click', () => aba === 'pagamentos' ? abrirPagamento() : abrirItem());
+$('#fab').addEventListener('click', () =>
+  aba === 'pagamentos' ? abrirPagamento() : aba === 'mensal' ? abrirConta() : abrirItem());
 
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-acao]');
@@ -400,6 +608,17 @@ document.addEventListener('click', e => {
   switch (acao) {
     case 'fechar': fecharModal(); break;
     case 'filtro': filtro = id; render(); break;
+    case 'mes': {
+      const d = Number(el.dataset.delta);
+      mesMensal = d === 0 ? mesAtual() : somarMes(mesMensal, d);
+      render(); break;
+    }
+    case 'pagar-conta': {
+      const conta = dados.contas.find(c => c.id === id);
+      if (conta) abrirPagarConta(conta, el.dataset.mes);
+      break;
+    }
+    case 'editar-conta': abrirConta(dados.contas.find(c => c.id === id)); break;
     case 'editar-item': abrirItem(dados.itens.find(i => i.id === id)); break;
     case 'editar-pagamento': abrirPagamento(dados.pagamentos.find(p => p.id === id)); break;
     case 'quitar': abrirPagamento({ de: el.dataset.de, para: el.dataset.para, valor: Number(el.dataset.valor) }); break;
@@ -409,7 +628,7 @@ document.addEventListener('click', e => {
     case 'exportar-csv': exportarCSV(); break;
     case 'exportar-json':
       baixar(`backup-gastos-da-casa-${hoje()}.json`,
-        JSON.stringify({ versao: 1, pessoas: dados.pessoas, itens: dados.itens, pagamentos: dados.pagamentos }, null, 2),
+        JSON.stringify({ versao: 2, pessoas: dados.pessoas, itens: dados.itens, pagamentos: dados.pagamentos, contas: dados.contas }, null, 2),
         'application/json');
       break;
     case 'importar-json': $('#arquivo-json').click(); break;
@@ -464,7 +683,7 @@ function atualizarSync(estado) {
     return;
   }
   store.subscribe(estado => {
-    dados = { pessoas: estado.pessoas, itens: estado.itens || [], pagamentos: estado.pagamentos || [] };
+    dados = { pessoas: estado.pessoas, itens: estado.itens || [], pagamentos: estado.pagamentos || [], contas: estado.contas || [] };
     carregado = true;
     atualizarSync(estado);
     render();

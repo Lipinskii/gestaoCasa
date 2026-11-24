@@ -37,6 +37,7 @@ async function criarFirebaseStore() {
   const casaRef = fs.doc(db, 'casas', CASA_ID);
   const itensCol = fs.collection(casaRef, 'itens');
   const pagCol = fs.collection(casaRef, 'pagamentos');
+  const contasCol = fs.collection(casaRef, 'contas');
 
   const limpar = obj => {
     const { id, ...resto } = obj;
@@ -47,12 +48,12 @@ async function criarFirebaseStore() {
     tipo: 'firebase',
     casaId: CASA_ID,
     subscribe(cb, cbErro) {
-      const estado = { pessoas: null, itens: [], pagamentos: [], pendente: false, offline: false };
-      const prontos = { casa: false, itens: false, pag: false };
-      const pend = { itens: false, pag: false };
+      const estado = { pessoas: null, itens: [], pagamentos: [], contas: [], pendente: false, offline: false };
+      const prontos = { casa: false, itens: false, pag: false, contas: false };
+      const pend = { itens: false, pag: false, contas: false };
       const emitir = () => {
-        estado.pendente = pend.itens || pend.pag;
-        if (prontos.casa && prontos.itens && prontos.pag) cb({ ...estado });
+        estado.pendente = pend.itens || pend.pag || pend.contas;
+        if (prontos.casa && prontos.itens && prontos.pag && prontos.contas) cb({ ...estado });
       };
       const opts = { includeMetadataChanges: true };
       fs.onSnapshot(casaRef, opts, snap => {
@@ -70,6 +71,11 @@ async function criarFirebaseStore() {
         pend.pag = snap.metadata.hasPendingWrites;
         prontos.pag = true; emitir();
       }, cbErro);
+      fs.onSnapshot(contasCol, opts, snap => {
+        estado.contas = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        pend.contas = snap.metadata.hasPendingWrites;
+        prontos.contas = true; emitir();
+      }, cbErro);
     },
     // As escritas não são aguardadas: o Firestore atualiza a tela na hora
     // e envia ao servidor quando houver conexão.
@@ -80,11 +86,14 @@ async function criarFirebaseStore() {
     excluirItem: id => fs.deleteDoc(fs.doc(itensCol, id)),
     salvarPagamento: pg => fs.setDoc(fs.doc(pagCol, pg.id || novoId()), limpar(pg)),
     excluirPagamento: id => fs.deleteDoc(fs.doc(pagCol, id)),
+    salvarConta: c => fs.setDoc(fs.doc(contasCol, c.id || novoId()), limpar(c)),
+    excluirConta: id => fs.deleteDoc(fs.doc(contasCol, id)),
     async importar(dados) {
       const lote = fs.writeBatch(db);
       if (dados.pessoas) lote.set(casaRef, { pessoas: dados.pessoas }, { merge: true });
       for (const it of dados.itens || []) lote.set(fs.doc(itensCol, it.id || novoId()), limpar(it));
       for (const pg of dados.pagamentos || []) lote.set(fs.doc(pagCol, pg.id || novoId()), limpar(pg));
+      for (const c of dados.contas || []) lote.set(fs.doc(contasCol, c.id || novoId()), limpar(c));
       return lote.commit();
     }
   };
@@ -95,7 +104,7 @@ async function criarFirebaseStore() {
 // ---------------------------------------------------------------------------
 function criarLocalStore() {
   const CHAVE = 'casa-gastos-dados-v1';
-  let estado = { pessoas: null, itens: [], pagamentos: [] };
+  let estado = { pessoas: null, itens: [], pagamentos: [], contas: [] };
   try {
     const salvo = localStorage.getItem(CHAVE);
     if (salvo) estado = { ...estado, ...JSON.parse(salvo) };
@@ -123,10 +132,13 @@ function criarLocalStore() {
     excluirItem(id) { estado.itens = estado.itens.filter(x => x.id !== id); return persistir(); },
     salvarPagamento(pg) { upsert('pagamentos', pg); return persistir(); },
     excluirPagamento(id) { estado.pagamentos = estado.pagamentos.filter(x => x.id !== id); return persistir(); },
+    salvarConta(c) { upsert('contas', c); return persistir(); },
+    excluirConta(id) { estado.contas = estado.contas.filter(x => x.id !== id); return persistir(); },
     importar(dados) {
       if (dados.pessoas) estado.pessoas = dados.pessoas;
       for (const it of dados.itens || []) upsert('itens', it);
       for (const pg of dados.pagamentos || []) upsert('pagamentos', pg);
+      for (const c of dados.contas || []) upsert('contas', c);
       return persistir();
     }
   };

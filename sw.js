@@ -1,8 +1,8 @@
 // Service worker: deixa o app abrir rápido e funcionar offline.
 // Busca sempre a versão mais nova na rede e usa o cache só quando está offline.
-const CACHE = 'casa-gastos-v2';
+const CACHE = 'casa-gastos-v3';
 const ARQUIVOS = [
-  './', './index.html', './app.js', './calculo.js', './store.js', './config.js',
+  './', './index.html', './app.js', './calculo.js', './store.js', './mensal.js', './config.js',
   './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'
 ];
 
