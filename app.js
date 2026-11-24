@@ -1,5 +1,5 @@
 import { criarStore } from './store.js';
-import { calcular, dividir, ordenarParticipantes, ordemDivisao, formatarBRL as brl, parseValor } from './calculo.js';
+import { calcular, dividir, ordenarParticipantes, ordemDivisao, partesDoItem, valorDoItem, formatarBRL as brl, parseValor } from './calculo.js';
 import { mesAtual, somarMes, contasDoMes, contasAtrasadas, contarAlertas, nomeMes, mesCurto, vencimentoNoMes } from './mensal.js';
 
 const CATEGORIAS = ['Móveis', 'Eletrodomésticos', 'Cozinha', 'Limpeza', 'Decoração', 'Mercado', 'Contas', 'Outros'];
@@ -122,6 +122,10 @@ function telaResumo(r) {
 }
 
 function descricaoDivisao(item) {
+  if (item.subitens?.length) {
+    const partes = partesDoItem(dados.pessoas, item);
+    return dados.pessoas.filter(p => partes[p.id]).map(p => `${esc(p.nome)} ${brl(partes[p.id])}`).join(' · ');
+  }
   const parts = ordenarParticipantes(dados.pessoas, item.participantes || []);
   if (parts.length === 1 && parts[0] === item.pagador) return 'só para quem pagou';
   const cada = brl(Math.floor(item.valor / parts.length));
@@ -141,7 +145,7 @@ function telaItens() {
   html += `<div class="card">` + itens.map(i => `
     <div class="item-li" data-acao="editar-item" data-id="${i.id}">
       <div class="cresce">
-        <div class="tit">${esc(i.nome)}${i.categoria ? `<span class="tag">${esc(i.categoria)}</span>` : ''}${i.contaId ? `<span class="tag">Mensal</span>` : ''}</div>
+        <div class="tit">${esc(i.nome)}${i.categoria ? `<span class="tag">${esc(i.categoria)}</span>` : ''}${i.contaId ? `<span class="tag">Mensal</span>` : ''}${i.subitens?.length ? `<span class="tag">${i.subitens.length} ${i.subitens.length === 1 ? 'item' : 'itens'}</span>` : ''}</div>
         <div class="sub">${dataBR(i.data)} · pago por ${esc(nome(i.pagador))}</div>
         <div class="sub">${descricaoDivisao(i)}</div>
       </div>
@@ -357,6 +361,8 @@ function abrirItem(item, titulo, aviso = '') {
       <fieldset><legend>Dividir com <b id="qtd"></b></legend>${seg('part', null, 'checkbox', item.participantes)}</fieldset>
       <div class="previa" id="previa"></div>
       <label class="campo">Observação (opcional)<input name="obs" maxlength="120" value="${esc(item.obs || '')}"></label>
+      ${daConta ? '' : `<button type="button" class="btn sec" style="width:100%;margin-bottom:12px" data-acao="virar-compra">
+        Separar em vários itens (ex.: compra de mercado)</button>`}
       <div class="erro" id="erro"></div>
       <div class="acoes">
         ${editando ? `<button type="button" class="btn perigo" data-acao="excluir-item">${daConta ? 'Desfazer pagamento' : 'Excluir'}</button>` : ''}
@@ -396,6 +402,14 @@ function abrirItem(item, titulo, aviso = '') {
   form.addEventListener('change', atualizarPrevia);
   atualizarPrevia();
 
+  $('#folha').querySelector('[data-acao="virar-compra"]')?.addEventListener('click', () => {
+    const v = ler();
+    const base = { ...item, ...v, nome: v.nome, categoria: v.categoria || 'Mercado',
+      participantes: v.participantes.length ? v.participantes : dados.pessoas.map(p => p.id),
+      subitens: v.valor > 0 ? [{ nome: v.nome || '', valor: v.valor, participantes: v.participantes }] : [] };
+    abrirCompra(base);
+  });
+
   form.addEventListener('submit', e => {
     e.preventDefault();
     const v = ler();
@@ -420,6 +434,160 @@ function abrirItem(item, titulo, aviso = '') {
     store.excluirItem(item.id).catch(falhou);
     toast(daConta ? 'Pagamento desfeito' : 'Item excluído');
   });
+}
+
+// Compra com vários itens internos, cada um com sua própria divisão
+function abrirCompra(item) {
+  const editando = !!item?.id;
+  const todos = dados.pessoas.map(p => p.id);
+  item = item || { nome: 'Mercado', data: hoje(), categoria: 'Mercado', pagador: eu || 'p1', participantes: todos, obs: '' };
+  let padrao = item.subitens?.length ? todos : (item.participantes?.length ? [...item.participantes] : todos);
+  const subs = (item.subitens?.length ? item.subitens : [])
+    .map(s => ({ nome: s.nome || '', valor: s.valor, txt: s.valor ? (s.valor / 100).toFixed(2).replace('.', ',') : '', participantes: [...(s.participantes?.length ? s.participantes : padrao)] }));
+  const nova = () => ({ nome: '', valor: NaN, txt: '', participantes: [...padrao] });
+  if (!subs.length) subs.push(nova());
+  const primeiroNome = n => esc(String(n).split(' ')[0]);
+
+  abrirModal(`
+    <h3>${editando ? 'Editar compra' : 'Compra com vários itens'}</h3>
+    <form id="form-compra" novalidate>
+      <label class="campo">Descrição<input name="nome" required maxlength="60" placeholder="Ex.: Mercado" value="${esc(item.nome)}"></label>
+      <div class="dupla">
+        <label class="campo">Data<input type="date" name="data" value="${esc(item.data || hoje())}"></label>
+        <label class="campo">Categoria<select name="categoria">
+          <option value="">—</option>
+          ${CATEGORIAS.map(c => `<option ${c === item.categoria ? 'selected' : ''}>${c}</option>`).join('')}
+        </select></label>
+      </div>
+      <fieldset><legend>Quem pagou a compra?</legend>${seg('pagador', item.pagador)}</fieldset>
+      <fieldset><legend>Novos itens dividem com</legend>
+        <div class="mini" id="padrao">${dados.pessoas.map(p => `<button type="button" class="mini-chip ${padrao.includes(p.id) ? 'on' : ''}" data-p="${p.id}">${primeiroNome(p.nome)}</button>`).join('')}</div>
+      </fieldset>
+      <div class="legenda-subs"><span>Itens</span><span class="sub">toque nos nomes para marcar quem divide</span></div>
+      <div id="subs"></div>
+      <button type="button" class="btn sec" style="width:100%;margin:4px 0 12px" id="add-sub">+ Adicionar item</button>
+      <div class="previa" id="previa"></div>
+      <label class="campo">Observação (opcional)<input name="obs" maxlength="120" value="${esc(item.obs || '')}"></label>
+      <div class="erro" id="erro"></div>
+      <div class="acoes">
+        ${editando ? `<button type="button" class="btn perigo" data-acao="excluir-compra">Excluir</button>` : ''}
+        <button type="button" class="btn sec" data-acao="fechar">Cancelar</button>
+        <button type="submit" class="btn cresce">Salvar</button>
+      </div>
+    </form>`);
+
+  const form = $('#form-compra');
+  const caixa = $('#subs');
+
+  const desenhar = () => {
+    caixa.innerHTML = subs.map((s, i) => `
+      <div class="sub-li" data-i="${i}">
+        <div class="sub-linha">
+          <input class="sub-nome" data-campo="nome" maxlength="60" placeholder="Item ${i + 1}" value="${esc(s.nome)}" enterkeyhint="next">
+          <input class="sub-valor" data-campo="valor" inputmode="decimal" placeholder="0,00" value="${esc(s.txt)}" enterkeyhint="next">
+          <button type="button" class="x" data-sub="remover" aria-label="Remover item">×</button>
+        </div>
+        <div class="mini">${dados.pessoas.map(p => `<button type="button" class="mini-chip ${s.participantes.includes(p.id) ? 'on' : ''}" data-sub="pessoa" data-p="${p.id}">${primeiroNome(p.nome)}</button>`).join('')}</div>
+      </div>`).join('');
+    previa();
+  };
+
+  const previa = () => {
+    const pagador = new FormData(form).get('pagador');
+    const validos = subs.filter(s => s.valor > 0 && s.participantes.length);
+    const total = validos.reduce((t, s) => t + s.valor, 0);
+    const el = $('#previa');
+    if (!validos.length) { el.innerHTML = 'Adicione os itens com valor para ver a divisão.'; return; }
+    const partes = partesDoItem(dados.pessoas, { pagador, subitens: validos });
+    const linhas = dados.pessoas.filter(p => partes[p.id]).map(p => p.id === pagador
+      ? `<div>${esc(p.nome)} (pagou): parte de <b>${brl(partes[p.id])}</b></div>`
+      : `<div>${esc(p.nome)} deve <b>${brl(partes[p.id])}</b> para ${esc(nome(pagador))}</div>`);
+    el.innerHTML = `<div>Total: <b>${brl(total)}</b> em ${validos.length} ${validos.length === 1 ? 'item' : 'itens'}</div>` + linhas.join('');
+  };
+
+  const adicionar = () => {
+    subs.push(nova());
+    desenhar();
+    caixa.querySelector(`.sub-li[data-i="${subs.length - 1}"] .sub-nome`).focus();
+  };
+
+  caixa.addEventListener('input', e => {
+    const li = e.target.closest('.sub-li'); if (!li) return;
+    const s = subs[Number(li.dataset.i)];
+    if (e.target.dataset.campo === 'nome') s.nome = e.target.value;
+    else { s.txt = e.target.value; s.valor = parseValor(e.target.value); }
+    previa();
+  });
+  caixa.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const li = e.target.closest('.sub-li');
+    if (e.target.dataset.campo === 'nome') li.querySelector('.sub-valor').focus();
+    else {
+      const prox = caixa.querySelector(`.sub-li[data-i="${Number(li.dataset.i) + 1}"] .sub-nome`);
+      prox ? prox.focus() : adicionar();
+    }
+  });
+  caixa.addEventListener('click', e => {
+    const b = e.target.closest('button[data-sub]'); if (!b) return;
+    const i = Number(b.closest('.sub-li').dataset.i);
+    if (b.dataset.sub === 'remover') {
+      subs.splice(i, 1);
+      if (!subs.length) subs.push(nova());
+    } else {
+      const lista = subs[i].participantes, p = b.dataset.p;
+      subs[i].participantes = lista.includes(p) ? lista.filter(x => x !== p) : [...lista, p];
+    }
+    desenhar();
+  });
+  $('#padrao').addEventListener('click', e => {
+    const b = e.target.closest('button[data-p]'); if (!b) return;
+    const p = b.dataset.p;
+    padrao = padrao.includes(p) ? padrao.filter(x => x !== p) : [...padrao, p];
+    b.classList.toggle('on', padrao.includes(p));
+  });
+  $('#add-sub').addEventListener('click', adicionar);
+  form.addEventListener('change', previa);
+
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const erro = msg => { $('#erro').textContent = msg; };
+    const preenchidos = subs.filter(s => s.nome.trim() || s.txt.trim());
+    if (!fd.get('nome').trim()) return erro('Informe a descrição da compra.');
+    if (!fd.get('pagador')) return erro('Escolha quem pagou.');
+    if (!preenchidos.length) return erro('Adicione pelo menos um item.');
+    for (const [k, s] of preenchidos.entries()) {
+      const rotulo = s.nome.trim() || `o item ${k + 1}`;
+      if (!(s.valor > 0)) return erro(`Informe um valor válido para ${rotulo}.`);
+      if (!s.participantes.length) return erro(`Marque quem divide ${rotulo}.`);
+    }
+    const subitens = preenchidos.map((s, k) => ({
+      nome: s.nome.trim() || `Item ${k + 1}`, valor: s.valor,
+      participantes: ordenarParticipantes(dados.pessoas, s.participantes)
+    }));
+    const salvar = {
+      nome: fd.get('nome').trim(), data: fd.get('data') || hoje(), categoria: fd.get('categoria'),
+      pagador: fd.get('pagador'), obs: fd.get('obs').trim(), subitens,
+      valor: valorDoItem({ subitens }),
+      participantes: ordenarParticipantes(dados.pessoas, [...new Set(subitens.flatMap(s => s.participantes))]),
+      criadoEm: editando ? item.criadoEm : (item.criadoEm || new Date().toISOString()),
+      atualizadoEm: new Date().toISOString()
+    };
+    if (item.id) salvar.id = item.id;
+    fecharModal();
+    store.salvarItem(salvar).catch(falhou);
+    toast(editando ? 'Compra atualizada' : 'Compra adicionada');
+  });
+
+  $('#folha').querySelector('[data-acao="excluir-compra"]')?.addEventListener('click', () => {
+    if (!confirm(`Excluir a compra "${item.nome}" com ${subs.length} ${subs.length === 1 ? 'item' : 'itens'}?`)) return;
+    fecharModal();
+    store.excluirItem(item.id).catch(falhou);
+    toast('Compra excluída');
+  });
+
+  desenhar();
 }
 
 function abrirPagarConta(conta, mes) {
@@ -579,9 +747,14 @@ function exportarCSV() {
   const c = s => `"${String(s ?? '').replace(/"/g, '""')}"`;
   const v = n => (n / 100).toFixed(2).replace('.', ',');
   const linhas = [['Tipo', 'Data', 'Descrição', 'Categoria', 'Valor', 'Pago por', 'Dividido entre', 'Para', 'Observação'].map(c).join(';')];
-  for (const i of [...dados.itens].sort(porData))
-    linhas.push(['Item', dataBR(i.data), i.nome, i.categoria, v(i.valor), nome(i.pagador),
-      ordenarParticipantes(dados.pessoas, i.participantes).map(nome).join(', '), '', i.obs].map(c).join(';'));
+  for (const i of [...dados.itens].sort(porData)) {
+    const composta = i.subitens?.length;
+    linhas.push([composta ? 'Compra' : 'Item', dataBR(i.data), i.nome, i.categoria, v(i.valor), nome(i.pagador),
+      composta ? 'ver itens abaixo' : ordenarParticipantes(dados.pessoas, i.participantes).map(nome).join(', '), '', i.obs].map(c).join(';'));
+    for (const s of i.subitens || [])
+      linhas.push(['  Item da compra', dataBR(i.data), s.nome, i.categoria, v(s.valor), nome(i.pagador),
+        ordenarParticipantes(dados.pessoas, s.participantes).map(nome).join(', '), '', ''].map(c).join(';'));
+  }
   for (const p of [...dados.pagamentos].sort(porData))
     linhas.push(['Acerto', dataBR(p.data), '', '', v(p.valor), nome(p.de), '', nome(p.para), p.obs].map(c).join(';'));
   baixar(`gastos-da-casa-${hoje()}.csv`, '﻿' + linhas.join('\r\n'), 'text/csv;charset=utf-8');
@@ -619,7 +792,11 @@ document.addEventListener('click', e => {
       break;
     }
     case 'editar-conta': abrirConta(dados.contas.find(c => c.id === id)); break;
-    case 'editar-item': abrirItem(dados.itens.find(i => i.id === id)); break;
+    case 'editar-item': {
+      const it = dados.itens.find(i => i.id === id);
+      if (it?.subitens?.length) abrirCompra(it); else if (it) abrirItem(it);
+      break;
+    }
     case 'editar-pagamento': abrirPagamento(dados.pagamentos.find(p => p.id === id)); break;
     case 'quitar': abrirPagamento({ de: el.dataset.de, para: el.dataset.para, valor: Number(el.dataset.valor) }); break;
     case 'sou':

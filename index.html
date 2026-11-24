@@ -104,6 +104,17 @@
   .conta.atrasada .dia span { color: #fff; }
   .conta.hoje .estado, .conta.breve .estado { color: var(--neg); font-weight: 600; }
   .conta.paga .tit { color: var(--sub); }
+  .legenda-subs { display: flex; justify-content: space-between; align-items: baseline; font-size: .85rem; color: var(--sub); margin-bottom: 6px; }
+  .sub-li { background: var(--card); border: 1px solid var(--borda); border-radius: 12px; padding: 8px; margin-bottom: 8px; }
+  .sub-linha { display: flex; gap: 6px; margin-bottom: 6px; }
+  .sub-linha input { min-width: 0; padding: 9px 10px; border: 1px solid var(--borda); border-radius: 8px; background: var(--bg); font-size: 1rem; }
+  .sub-nome { flex: 1; }
+  .sub-valor { width: 92px; text-align: right; }
+  .x { border: 0; background: none; color: var(--sub); font-size: 1.4rem; line-height: 1; padding: 0 6px; cursor: pointer; }
+  .mini { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .mini-chip { border: 1px solid var(--borda); background: var(--card); color: var(--sub); border-radius: 999px; padding: 5px 4px;
+    font-size: .82rem; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mini-chip.on { background: var(--pri-claro); border-color: var(--pri); color: var(--pri); font-weight: 600; }
   .lapis { border: 0; background: none; color: var(--sub); padding: 6px; cursor: pointer; flex: none; }
   .lapis svg { width: 18px; height: 18px; display: block; }
   .fab { position: fixed; right: 18px; bottom: calc(76px + env(safe-area-inset-bottom)); z-index: 11;
@@ -181,7 +192,23 @@
         + '<div class="sub" style="margin-top:6px">' + String(e.message).replace(/</g, '&lt;') + '</div></div>';
     });
   </script>
-  <script type="module" src="app.js"></script>
+  <script type="module">
+    // Carrega o app; se falhar (arquivo faltando, nome errado…), diz qual arquivo é o problema
+    import('./app.js').catch(async err => {
+      const arquivos = ['app.js', 'store.js', 'calculo.js', 'mensal.js', 'config.js'];
+      const faltando = [];
+      for (const f of arquivos) {
+        try { const r = await fetch(f + '?v=' + Date.now(), { cache: 'no-store' }); if (!r.ok) faltando.push(f + ' (' + r.status + ')'); }
+        catch { faltando.push(f + ' (sem conexão)'); }
+      }
+      document.getElementById('tela').innerHTML = '<div class="card"><b>Erro ao carregar o app</b>'
+        + (faltando.length
+          ? '<div class="sub" style="margin-top:6px">Arquivo(s) não encontrado(s) no site: <code>' + faltando.join(', ') + '</code>.<br>'
+            + 'Confira se foram enviados para o repositório com o nome exatamente assim (letras minúsculas).</div>'
+          : '<div class="sub" style="margin-top:6px">' + String(err.message || err).replace(/</g, '&lt;') + '</div>')
+        + '</div>';
+    });
+  </script>
   <script>
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
       navigator.serviceWorker.register('sw.js').catch(() => {});

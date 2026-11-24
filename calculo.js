@@ -31,6 +31,27 @@ export function ordenarParticipantes(pessoas, participantes) {
   return ordem.filter(id => participantes.includes(id));
 }
 
+/** Linhas de divisão de um item: os itens internos de uma compra ou o próprio item. */
+export const linhasDoItem = item => (item.subitens && item.subitens.length ? item.subitens : [item]);
+
+/**
+ * Quanto cabe a cada pessoa num item (em centavos). Numa compra com itens
+ * internos, cada item interno é dividido só entre as pessoas marcadas nele.
+ */
+export function partesDoItem(pessoas, item) {
+  const res = {};
+  for (const linha of linhasDoItem(item)) {
+    const parts = ordemDivisao(pessoas, linha.participantes || [], item.pagador);
+    if (!parts.length || !(linha.valor > 0)) continue;
+    const partes = dividir(linha.valor, parts);
+    for (const p of parts) res[p] = (res[p] || 0) + partes[p];
+  }
+  return res;
+}
+
+/** Valor total do item (soma dos itens internos, quando houver). */
+export const valorDoItem = item => linhasDoItem(item).reduce((t, l) => t + (l.valor > 0 ? l.valor : 0), 0);
+
 /**
  * Calcula quem deve quanto para quem.
  * @param pessoas    [{id, nome}]
@@ -51,15 +72,15 @@ export function calcular(pessoas, itens, pagamentos) {
 
   for (const item of itens) {
     if (!ids.includes(item.pagador)) continue;
-    const parts = ordemDivisao(pessoas, item.participantes || [], item.pagador);
-    if (parts.length === 0) continue;
-    const partes = dividir(item.valor, parts);
-    pago[item.pagador] += item.valor;
-    total += item.valor;
-    for (const p of parts) {
-      consumo[p] += partes[p];
-      if (p !== item.pagador) deve[p][item.pagador] += partes[p];
+    const partes = partesDoItem(pessoas, item);
+    let valorItem = 0;
+    for (const [p, v] of Object.entries(partes)) {
+      valorItem += v;
+      consumo[p] += v;
+      if (p !== item.pagador) deve[p][item.pagador] += v;
     }
+    pago[item.pagador] += valorItem;
+    total += valorItem;
   }
 
   for (const pg of pagamentos) {

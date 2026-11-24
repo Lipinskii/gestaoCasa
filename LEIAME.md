@@ -7,6 +7,7 @@ App para celular que controla as compras da casa e calcula quanto cada morador d
 - A opção **Simplificar** calcula o menor número de transferências possível.
 - Na aba **Acertos** vocês registram os Pix entre moradores, e esses valores são descontados do que ainda está em aberto. O botão **Quitar** no Resumo já preenche o valor.
 - Os dados ficam sincronizados entre os três celulares pelo Firebase. O app também funciona sem internet e envia as alterações quando a conexão volta.
+- **Compras com vários itens** (ex.: mercado): no formulário de item, toque em *Separar em vários itens*. Cada item interno tem valor próprio e vocês marcam quem divide cada um (ex.: shampoo só do Maurício). A compra aparece como um único lançamento na lista.
 - Na aba **Mensal** ficam as contas que se repetem todo mês (aluguel, luz, internet…), com dia de vencimento. Cada mês mostra o que está pago, o que vence em breve e o que está atrasado, inclusive de meses anteriores. Ao marcar uma conta como paga, o valor entra na divisão como um item comum.
 - Em Ajustes dá para exportar uma planilha (CSV) e fazer backup ou restauração (JSON).
 
